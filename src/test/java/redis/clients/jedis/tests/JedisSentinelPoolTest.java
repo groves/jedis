@@ -7,7 +7,6 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.pool.impl.GenericObjectPool.Config;
 import org.junit.After;
-import org.junit.Before;
 import org.junit.Test;
 
 import redis.clients.jedis.*;
@@ -20,7 +19,7 @@ public class JedisSentinelPoolTest extends JedisTestBase {
     private final List<EmbeddedRedis> redii = new ArrayList<EmbeddedRedis>();
 
     @After
-    public void tearDown() {
+    public void tearDown() throws InterruptedException {
         for (EmbeddedRedis redis : redii) {
             redis.die();
         }
@@ -46,23 +45,24 @@ public class JedisSentinelPoolTest extends JedisTestBase {
         redii.add(new EmbeddedRedis(instanceName, allArgs));
     }
 
-    private void monitorSentinelReadiness(final String host, final int port, final CountDownLatch sentinelReady) {
+    private void awaitChannels(final String host, final int port, final CountDownLatch sentinelReady, String... channelsToAwait) {
+        final Set<String> awaiting = new HashSet<String>();
+        for (String channel : channelsToAwait) {
+            awaiting.add(channel);
+        }
         JedisPubSub sentinelPubSub = new JedisPubSubAdapter(){
             @Override
             public void onMessage(String channel, String message) {
-                Jedis reconn = new Jedis(host, port);
-                List<Map<String, String>> masters = reconn.sentinelMasters();
-                List<Map<String, String>> slaves = reconn.sentinelSlaves("mymaster");
-                if (!masters.isEmpty() && !slaves.isEmpty()) {
+                if (awaiting.remove(channel) && awaiting.isEmpty()) {
                     sentinelReady.countDown();
                     unsubscribe();
                 }
             }
         };
-        runSubscription(host, port, sentinelPubSub, "+sentinel", "+slave");
+        runSubscription(host, port, sentinelPubSub, channelsToAwait);
     }
 
-    private void startRedisSentinel(String instanceName, int port, String masterName, int masterPort, CountDownLatch sentinelReady) throws IOException {
+    private void startRedisSentinel(String instanceName, int port, String masterName, int masterPort, CountDownLatch sentinelReady, String...channelsToAwait) throws IOException {
         redii.add(new EmbeddedRedis(instanceName, "/usr/local/bin/redis-sentinel", "--port", "" + port,
                 "--logfile", "/tmp/" + instanceName + ".out",
                 "--sentinel", "monitor", masterName, "127.0.0.1", "" + masterPort, "2",
@@ -72,34 +72,41 @@ public class JedisSentinelPoolTest extends JedisTestBase {
                 "--sentinel", "parallel-syncs", masterName, "1",
                 "--sentinel", "failover-timeout", masterName, "1000"));
         sentinels.add("localhost:" + port);
-        monitorSentinelReadiness("localhost", port, sentinelReady);
-    }
-
-    @Before
-    public void setUp() throws Exception {
-        startRedisServer("master", MASTER_PORT);
-        startRedisServer("slave", SLAVE_PORT, "--slaveof", "localhost", "" + MASTER_PORT, "--masterauth", "foobared");
-
-        CountDownLatch sentinelReady = new CountDownLatch(2);
-        startRedisSentinel("poolsentinel1", SENTINEL1_PORT, "mymaster", MASTER_PORT, sentinelReady);
-        startRedisSentinel("poolsentinel2", SENTINEL2_PORT, "mymaster", MASTER_PORT, sentinelReady);
-        if (!sentinelReady.await(15, TimeUnit.SECONDS)) {
-            throw new IllegalStateException("Sentinels weren't ready in 15 seconds");
+        for (String channel : channelsToAwait) System.out.println("Waiting for " + channel);
+        try {
+            Thread.sleep(100);
+        } catch (InterruptedException e) {
         }
+        awaitChannels("localhost", port, sentinelReady, channelsToAwait);
     }
 
     private void monitorSentinelSwitch(String host, int port, final CountDownLatch onSwitch) {
-        runSubscription(host, port, new JedisPubSubAdapter() {
-            @Override
-            public void onMessage(String channel, String message) {
-                onSwitch.countDown();
-                unsubscribe();
-            }
-        }, "+sentinel");
+        awaitChannels(host, port, onSwitch, "+sentinel");
     }
 
     @Test
-    public void segfaultMaster() throws InterruptedException {
+    public void startWithoutServers() throws IOException, InterruptedException {
+
+        startRedisSentinels("+sdown");
+
+        JedisSentinelPool pool = new JedisSentinelPool("mymaster", sentinels,
+                new Config(), 1000, "foobared", 2);
+
+        try {
+            pool.getResource();
+            fail("Should've thrown a JedisConnectionException");
+        } catch (JedisConnectionException jce) { }
+
+        startMasterSlaveRedisServers();
+        assertEquals("PONG", pool.getResource().ping());
+    }
+
+    @Test
+    public void segfaultMaster() throws InterruptedException, IOException {
+        startMasterSlaveRedisServers();
+
+        startRedisSentinels("+sentinel", "+slave");
+
         JedisSentinelPool pool = new JedisSentinelPool("mymaster", sentinels,
                 new Config(), 1000, "foobared", 2);
 
@@ -110,6 +117,7 @@ public class JedisSentinelPoolTest extends JedisTestBase {
         masterJedis.auth("foobared");
         try {
             masterJedis.debug(DebugParams.SEGFAULT());
+            fail("Should've thrown a JedisConnectionException");
         } catch (JedisConnectionException jce) {
             // We expect an exception as the connection will be closed from the segfault
         }
@@ -123,5 +131,19 @@ public class JedisSentinelPoolTest extends JedisTestBase {
         assertEquals("PONG", jedis.ping());
         assertEquals("foobared", jedis.configGet("requirepass").get(1));
         assertEquals(2, jedis.getDB().intValue());
+    }
+
+    private void startRedisSentinels(String...channelsToAwait) throws IOException, InterruptedException {
+        CountDownLatch sentinelReady = new CountDownLatch(2);
+        startRedisSentinel("poolsentinel1", SENTINEL1_PORT, "mymaster", MASTER_PORT, sentinelReady, channelsToAwait);
+        startRedisSentinel("poolsentinel2", SENTINEL2_PORT, "mymaster", MASTER_PORT, sentinelReady, channelsToAwait);
+        if (!sentinelReady.await(15, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("Sentinels weren't ready in 15 seconds");
+        }
+    }
+
+    private void startMasterSlaveRedisServers() throws IOException {
+        startRedisServer("master", MASTER_PORT);
+        startRedisServer("slave", SLAVE_PORT, "--slaveof", "localhost", "" + MASTER_PORT, "--masterauth", "foobared");
     }
 }

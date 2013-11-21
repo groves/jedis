@@ -117,16 +117,7 @@ public class JedisPoolTest extends Assert {
         pool1.returnResource(jedis0);
         pool1.destroy();
     }
-    
-    @Test
-    public void returnBinary() {
-        JedisPool pool = new JedisPool(new JedisPoolConfig(), hnp.host,
-                hnp.port, 2000);
-        BinaryJedis jedis = pool.getResource();
-        pool.returnResource(jedis);
-        pool.destroy();
-    }
-    
+
     @Test
     public void startWithUrlString() {
 	Jedis j = new Jedis("localhost", 6380);

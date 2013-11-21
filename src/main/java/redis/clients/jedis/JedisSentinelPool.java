@@ -73,14 +73,6 @@ public class JedisSentinelPool extends Pool<Jedis> {
         initPool(master);
     }
 
-    public void returnBrokenResource(final BinaryJedis resource) {
-        returnBrokenResourceObject(resource);
-    }
-
-    public void returnResource(final BinaryJedis resource) {
-        returnResourceObject(resource);
-    }
-
     private class HostAndPort {
         String host;
         int port;

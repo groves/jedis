@@ -28,7 +28,8 @@ public class EmbeddedRedis {
         }).start();
     }
 
-    public void die() {
+    public void die() throws InterruptedException {
         redisProcess.destroy();
+        redisProcess.waitFor();
     }
 }

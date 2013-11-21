@@ -24,10 +24,10 @@ public class JedisPool extends Pool<Jedis> {
 	    int port = uri.getPort();
 	    String password = uri.getUserInfo().split(":", 2)[1];
 	    int database = Integer.parseInt(uri.getPath().split("/", 2)[1]);
-	    this.internalPool = new GenericObjectPool(new JedisFactory(h, port,
+	    this.internalPool = new GenericObjectPool<Jedis>(new JedisFactory(h, port,
 		    Protocol.DEFAULT_TIMEOUT, password, database), new Config());
 	} else {
-	    this.internalPool = new GenericObjectPool(new JedisFactory(host,
+	    this.internalPool = new GenericObjectPool<Jedis>(new JedisFactory(host,
 		    Protocol.DEFAULT_PORT, Protocol.DEFAULT_TIMEOUT, null,
 		    Protocol.DEFAULT_DATABASE), new Config());
 	}
@@ -59,13 +59,4 @@ public class JedisPool extends Pool<Jedis> {
                      final int database) {
         super(poolConfig, new JedisFactory(host, port, timeout, password, database));
     }
-
-
-    public void returnBrokenResource(final BinaryJedis resource) {
-    	returnBrokenResourceObject(resource);
-    }
-    
-    public void returnResource(final BinaryJedis resource) {
-    	returnResourceObject(resource);
-    }   
 }

@@ -5,7 +5,7 @@ import org.apache.commons.pool.BasePoolableObjectFactory;
 /**
  * PoolableObjectFactory custom impl.
  */
-class JedisFactory extends BasePoolableObjectFactory {
+class JedisFactory extends BasePoolableObjectFactory<Jedis> {
     private final String host;
     private final int port;
     private final int timeout;
@@ -14,7 +14,6 @@ class JedisFactory extends BasePoolableObjectFactory {
 
     public JedisFactory(final String host, final int port,
             final int timeout, final String password, final int database) {
-        super();
         this.host = host;
         this.port = port;
         this.timeout = timeout;
@@ -22,7 +21,7 @@ class JedisFactory extends BasePoolableObjectFactory {
         this.database = database;
     }
 
-    public Object makeObject() throws Exception {
+    public Jedis makeObject() throws Exception {
         final Jedis jedis = new Jedis(this.host, this.port, this.timeout);
 
         jedis.connect();
@@ -37,41 +36,32 @@ class JedisFactory extends BasePoolableObjectFactory {
     }
     
     @Override
-    public void activateObject(Object obj) throws Exception {
-		if (obj instanceof Jedis) {
-            final Jedis jedis = (Jedis)obj;
-            if (jedis.getDB() != database) {
-            	jedis.select(database);
-            }
-		}
+    public void activateObject(Jedis jedis) throws Exception {
+        if (jedis.getDB() != database) {
+            jedis.select(database);
+        }
     }
 
-    public void destroyObject(final Object obj) throws Exception {
-        if (obj instanceof Jedis) {
-            final Jedis jedis = (Jedis) obj;
-            if (jedis.isConnected()) {
+    @Override
+    public void destroyObject(final Jedis jedis) throws Exception {
+        if (jedis.isConnected()) {
+            try {
                 try {
-                    try {
-                        jedis.quit();
-                    } catch (Exception e) {
-                    }
-                    jedis.disconnect();
+                    jedis.quit();
                 } catch (Exception e) {
-
                 }
+                jedis.disconnect();
+            } catch (Exception e) {
+
             }
         }
     }
 
-    public boolean validateObject(final Object obj) {
-        if (obj instanceof Jedis) {
-            final Jedis jedis = (Jedis) obj;
-            try {
-                return jedis.isConnected() && jedis.ping().equals("PONG");
-            } catch (final Exception e) {
-                return false;
-            }
-        } else {
+    @Override
+    public boolean validateObject(Jedis jedis) {
+        try {
+            return jedis.isConnected() && jedis.ping().equals("PONG");
+        } catch (final Exception e) {
             return false;
         }
     }
