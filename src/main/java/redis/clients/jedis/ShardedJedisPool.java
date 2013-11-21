@@ -6,10 +6,11 @@ import java.util.regex.Pattern;
 import org.apache.commons.pool.BasePoolableObjectFactory;
 import org.apache.commons.pool.impl.GenericObjectPool;
 
+import redis.clients.util.FixedPool;
 import redis.clients.util.Hashing;
 import redis.clients.util.Pool;
 
-public class ShardedJedisPool extends Pool<ShardedJedis> {
+public class ShardedJedisPool extends FixedPool<ShardedJedis> {
     public ShardedJedisPool(final GenericObjectPool.Config poolConfig,
             List<JedisShardInfo> shards) {
         this(poolConfig, shards, Hashing.MURMUR_HASH);
@@ -33,7 +34,7 @@ public class ShardedJedisPool extends Pool<ShardedJedis> {
     /**
      * PoolableObjectFactory custom impl.
      */
-    private static class ShardedJedisFactory extends BasePoolableObjectFactory {
+    private static class ShardedJedisFactory extends BasePoolableObjectFactory<ShardedJedis> {
         private List<JedisShardInfo> shards;
         private Hashing algo;
         private Pattern keyTagPattern;
@@ -45,14 +46,12 @@ public class ShardedJedisPool extends Pool<ShardedJedis> {
             this.keyTagPattern = keyTagPattern;
         }
 
-        public Object makeObject() throws Exception {
-            ShardedJedis jedis = new ShardedJedis(shards, algo, keyTagPattern);
-            return jedis;
+        public ShardedJedis makeObject() throws Exception {
+            return new ShardedJedis(shards, algo, keyTagPattern);
         }
 
-        public void destroyObject(final Object obj) throws Exception {
-            if ((obj != null) && (obj instanceof ShardedJedis)) {
-                ShardedJedis shardedJedis = (ShardedJedis) obj;
+        public void destroyObject(final ShardedJedis shardedJedis) throws Exception {
+            if (shardedJedis != null) {
                 for (Jedis jedis : shardedJedis.getAllShards()) {
                     try {
                    		try {
@@ -68,9 +67,8 @@ public class ShardedJedisPool extends Pool<ShardedJedis> {
             }
         }
 
-        public boolean validateObject(final Object obj) {
+        public boolean validateObject(final ShardedJedis jedis) {
         	try {
-                ShardedJedis jedis = (ShardedJedis) obj;
                 for (Jedis shard : jedis.getAllShards()) {
                     if (!shard.ping().equals("PONG")) {
                         return false;

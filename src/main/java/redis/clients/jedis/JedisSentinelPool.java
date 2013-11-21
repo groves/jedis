@@ -7,12 +7,15 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
 
+import org.apache.commons.pool.impl.GenericObjectPool;
 import org.apache.commons.pool.impl.GenericObjectPool.Config;
 
 import redis.clients.jedis.exceptions.JedisConnectionException;
+import redis.clients.jedis.exceptions.JedisException;
 import redis.clients.util.Pool;
 
-public class JedisSentinelPool extends Pool<Jedis> {
+public class JedisSentinelPool implements Pool<Jedis> {
+    private GenericObjectPool<Jedis> internalPool;
 
     protected Config poolConfig;
 
@@ -73,6 +76,42 @@ public class JedisSentinelPool extends Pool<Jedis> {
         initPool(master);
     }
 
+    public Jedis getResource() {
+        try {
+            return internalPool.borrowObject();
+        } catch (Exception e) {
+            throw new JedisConnectionException("Could not get a resource from the pool", e);
+        }
+    }
+
+
+    public void returnBrokenResource(Jedis resource) {
+        try {
+            internalPool.invalidateObject(resource);
+        } catch (Exception e) {
+            throw new JedisException("Could not return the resource to the pool", e);
+        }
+    }
+
+    public void returnResource(Jedis resource) {
+        try {
+            internalPool.returnObject(resource);
+        } catch (Exception e) {
+            throw new JedisException("Could not return the resource to the pool", e);
+        }
+    }
+
+    public void destroy() {
+        for (MasterListener m : masterListeners) {
+            m.shutdown();
+        }
+        try {
+            internalPool.close();
+        } catch (Exception e) {
+            throw new JedisException("Could not destroy the pool", e);
+        }
+    }
+
     private class HostAndPort {
         String host;
         int port;
@@ -94,14 +133,6 @@ public class JedisSentinelPool extends Pool<Jedis> {
 
     private volatile HostAndPort currentHostMaster;
 
-    public void destroy() {
-        for (MasterListener m : masterListeners) {
-            m.shutdown();
-        }
-
-        super.destroy();
-    }
-
     public HostAndPort getCurrentHostMaster() {
         return currentHostMaster;
     }
@@ -110,8 +141,8 @@ public class JedisSentinelPool extends Pool<Jedis> {
         if (!master.equals(currentHostMaster)) {
             currentHostMaster = master;
             log.info("Created JedisPool to master at " + master);
-            initPool(poolConfig, new JedisFactory(master.host, master.port,
-                    timeout, password, database));
+            internalPool =
+                    new GenericObjectPool<Jedis>(new JedisFactory(master.host, master.port, timeout, password, database), poolConfig);
         }
     }
 
