@@ -83,6 +83,23 @@ public class JedisSentinelPoolTest extends JedisTestBase {
         awaitChannels("localhost", SENTINEL2_PORT, sentinelSwitch, channel);
         sentinelSwitch.await(1, TimeUnit.MINUTES);
     }
+    @Test
+    public void startWithoutSentinels() throws Exception {
+        startMasterSlaveRedisServers();
+        sentinels.add("localhost:" + SENTINEL1_PORT);
+        sentinels.add("localhost:" + SENTINEL2_PORT);
+
+        JedisSentinelPool pool = new JedisSentinelPool("mymaster", sentinels,
+                new Config(), 1000, "foobared", 2, 10);
+        try {
+            pool.getResource();
+            fail("Should've thrown a JedisConnectionException");
+        } catch (JedisConnectionException jce) { }
+
+        startRedisSentinels("+sentinel");
+
+        assertEquals("PONG", pool.getResource().ping());
+    }
 
     @Test
     public void startWithoutServers() throws Exception {
