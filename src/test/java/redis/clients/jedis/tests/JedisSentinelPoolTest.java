@@ -16,11 +16,15 @@ public class JedisSentinelPoolTest extends JedisTestBase {
     private static final int MASTER_PORT = 9381, SLAVE_PORT = MASTER_PORT + 1, SENTINEL1_PORT = MASTER_PORT + 20000, SENTINEL2_PORT = SENTINEL1_PORT + 1;
 
     protected final Set<String> sentinels = new HashSet<String>();
-    private final List<EmbeddedRedis> redii = new ArrayList<EmbeddedRedis>();
+    private final List<EmbeddedRedis> serverProcs = new ArrayList<EmbeddedRedis>();
+    private final List<EmbeddedRedis> sentinelProcs = new ArrayList<EmbeddedRedis>();
 
     @After
     public void tearDown() throws InterruptedException {
-        for (EmbeddedRedis redis : redii) {
+        for (EmbeddedRedis redis : serverProcs) {
+            redis.die();
+        }
+        for (EmbeddedRedis redis : sentinelProcs) {
             redis.die();
         }
     }
@@ -42,7 +46,7 @@ public class JedisSentinelPoolTest extends JedisTestBase {
         String[] allArgs = new String[baseArgs.length + additionalArgs.length];
         System.arraycopy(baseArgs, 0, allArgs, 0, baseArgs.length);
         System.arraycopy(additionalArgs, 0, allArgs, baseArgs.length, additionalArgs.length);
-        redii.add(new EmbeddedRedis(instanceName, allArgs));
+        serverProcs.add(new EmbeddedRedis(instanceName, allArgs));
     }
 
     private void awaitChannels(final String host, final int port, final CountDownLatch sentinelReady, String... channelsToAwait) {
@@ -63,7 +67,7 @@ public class JedisSentinelPoolTest extends JedisTestBase {
     }
 
     private void startRedisSentinel(String instanceName, int port, String masterName, int masterPort, CountDownLatch sentinelReady, String...channelsToAwait) throws Exception {
-        redii.add(new EmbeddedRedis(instanceName, "/usr/local/bin/redis-sentinel", "--port", "" + port,
+        sentinelProcs.add(new EmbeddedRedis(instanceName, "/usr/local/bin/redis-sentinel", "--port", "" + port,
                 "--logfile", "/tmp/" + instanceName + ".out",
                 "--sentinel", "monitor", masterName, "127.0.0.1", "" + masterPort, "2",
                 "--sentinel", "auth-pass", masterName, "foobared",
@@ -132,6 +136,17 @@ public class JedisSentinelPoolTest extends JedisTestBase {
         Jedis jedis = pool.getResource();
         assertEquals("PONG", jedis.ping());
 
+        segfaultMasterJedis();
+
+        monitorSentinelSwitch("+sentinel");
+
+        jedis = pool.getResource();
+        assertEquals("PONG", jedis.ping());
+        assertEquals("foobared", jedis.configGet("requirepass").get(1));
+        assertEquals(2, jedis.getDB().intValue());
+    }
+
+    private void segfaultMasterJedis() {
         Jedis masterJedis = new Jedis("localhost", MASTER_PORT);
         masterJedis.auth("foobared");
         try {
@@ -140,8 +155,24 @@ public class JedisSentinelPoolTest extends JedisTestBase {
         } catch (JedisConnectionException jce) {
             // We expect an exception as the connection will be closed from the segfault
         }
+    }
 
-        monitorSentinelSwitch("+sentinel");
+    @Test
+    public void recoverFromSentinelOutage() throws Exception {
+        startMasterSlaveRedisServers();
+        startRedisSentinels("+sentinel", "+slave");
+
+        JedisSentinelPool pool = new JedisSentinelPool("mymaster", sentinels,
+                new Config(), 1000, "foobared", 2);
+
+        Jedis jedis = pool.getResource();
+        assertEquals("PONG", jedis.ping());
+
+        for (EmbeddedRedis redis : sentinelProcs) {
+            redis.die();
+        }
+
+        startRedisSentinels("+sentinel");
 
         jedis = pool.getResource();
         assertEquals("PONG", jedis.ping());
