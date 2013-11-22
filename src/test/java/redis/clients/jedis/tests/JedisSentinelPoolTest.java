@@ -62,7 +62,7 @@ public class JedisSentinelPoolTest extends JedisTestBase {
         runSubscription(host, port, sentinelPubSub, channelsToAwait);
     }
 
-    private void startRedisSentinel(String instanceName, int port, String masterName, int masterPort, CountDownLatch sentinelReady, String...channelsToAwait) throws IOException {
+    private void startRedisSentinel(String instanceName, int port, String masterName, int masterPort, CountDownLatch sentinelReady, String...channelsToAwait) throws Exception {
         redii.add(new EmbeddedRedis(instanceName, "/usr/local/bin/redis-sentinel", "--port", "" + port,
                 "--logfile", "/tmp/" + instanceName + ".out",
                 "--sentinel", "monitor", masterName, "127.0.0.1", "" + masterPort, "2",
@@ -72,25 +72,25 @@ public class JedisSentinelPoolTest extends JedisTestBase {
                 "--sentinel", "parallel-syncs", masterName, "1",
                 "--sentinel", "failover-timeout", masterName, "1000"));
         sentinels.add("localhost:" + port);
-        for (String channel : channelsToAwait) System.out.println("Waiting for " + channel);
-        try {
-            Thread.sleep(100);
-        } catch (InterruptedException e) {
-        }
+        // Wait a tenth of a second for the sentinel to start up
+        Thread.sleep(100);
         awaitChannels("localhost", port, sentinelReady, channelsToAwait);
     }
 
-    private void monitorSentinelSwitch(String host, int port, final CountDownLatch onSwitch) {
-        awaitChannels(host, port, onSwitch, "+sentinel");
+    private void monitorSentinelSwitch(String channel) throws InterruptedException {
+        CountDownLatch sentinelSwitch = new CountDownLatch(2);
+        awaitChannels("localhost", SENTINEL1_PORT, sentinelSwitch, channel);
+        awaitChannels("localhost", SENTINEL2_PORT, sentinelSwitch, channel);
+        sentinelSwitch.await(1, TimeUnit.MINUTES);
     }
 
     @Test
-    public void startWithoutServers() throws IOException, InterruptedException {
+    public void startWithoutServers() throws Exception {
 
         startRedisSentinels("+sdown");
 
         JedisSentinelPool pool = new JedisSentinelPool("mymaster", sentinels,
-                new Config(), 1000, "foobared", 2);
+                new Config(), 1000, "foobared", 2, 10);
 
         try {
             pool.getResource();
@@ -98,11 +98,13 @@ public class JedisSentinelPoolTest extends JedisTestBase {
         } catch (JedisConnectionException jce) { }
 
         startMasterSlaveRedisServers();
+        monitorSentinelSwitch("-sdown");
+
         assertEquals("PONG", pool.getResource().ping());
     }
 
     @Test
-    public void segfaultMaster() throws InterruptedException, IOException {
+    public void segfaultMaster() throws Exception {
         startMasterSlaveRedisServers();
 
         startRedisSentinels("+sentinel", "+slave");
@@ -122,10 +124,7 @@ public class JedisSentinelPoolTest extends JedisTestBase {
             // We expect an exception as the connection will be closed from the segfault
         }
 
-        CountDownLatch sentinelSwitch = new CountDownLatch(2);
-        monitorSentinelSwitch("localhost", SENTINEL1_PORT, sentinelSwitch);
-        monitorSentinelSwitch("localhost", SENTINEL2_PORT, sentinelSwitch);
-        sentinelSwitch.await(1, TimeUnit.MINUTES);
+        monitorSentinelSwitch("+sentinel");
 
         jedis = pool.getResource();
         assertEquals("PONG", jedis.ping());
@@ -133,7 +132,7 @@ public class JedisSentinelPoolTest extends JedisTestBase {
         assertEquals(2, jedis.getDB().intValue());
     }
 
-    private void startRedisSentinels(String...channelsToAwait) throws IOException, InterruptedException {
+    private void startRedisSentinels(String...channelsToAwait) throws Exception {
         CountDownLatch sentinelReady = new CountDownLatch(2);
         startRedisSentinel("poolsentinel1", SENTINEL1_PORT, "mymaster", MASTER_PORT, sentinelReady, channelsToAwait);
         startRedisSentinel("poolsentinel2", SENTINEL2_PORT, "mymaster", MASTER_PORT, sentinelReady, channelsToAwait);
