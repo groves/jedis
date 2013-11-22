@@ -5,6 +5,7 @@ import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.commons.pool.impl.GenericObjectPool;
 import org.apache.commons.pool.impl.GenericObjectPool.Config;
 import org.junit.After;
 import org.junit.Test;
@@ -87,6 +88,7 @@ public class JedisSentinelPoolTest extends JedisTestBase {
         awaitChannels("localhost", SENTINEL2_PORT, sentinelSwitch, channel);
         sentinelSwitch.await(1, TimeUnit.MINUTES);
     }
+
     @Test
     public void startWithoutSentinels() throws Exception {
         startMasterSlaveRedisServers();
@@ -130,17 +132,32 @@ public class JedisSentinelPoolTest extends JedisTestBase {
 
         startRedisSentinels("+sentinel", "+slave");
 
-        JedisSentinelPool pool = new JedisSentinelPool("mymaster", sentinels,
-                new Config(), 1000, "foobared", 2);
+        Config config = new Config();
+        config.maxActive = 1;
+        config.whenExhaustedAction = GenericObjectPool.WHEN_EXHAUSTED_FAIL;
+        JedisSentinelPool pool = new JedisSentinelPool("mymaster", sentinels, config, 1000, "foobared", 2);
 
         Jedis jedis = pool.getResource();
         assertEquals("PONG", jedis.ping());
+        try {
+            pool.getResource();
+            fail("Should've thrown a JedisConnectionException");
+        } catch (JedisConnectionException jce) {}
+        pool.returnResource(jedis);
+        jedis = pool.getResource();
 
         segfaultMasterJedis();
 
         monitorSentinelSwitch("+sentinel");
 
+        // Should do nothing since we already pool is gone
+        pool.returnResource(jedis);
+
         jedis = pool.getResource();
+        try {
+            pool.getResource();
+            fail("Should still throw a JedisConnectionException even after the double return");
+        } catch (JedisConnectionException jce) {}
         assertEquals("PONG", jedis.ping());
         assertEquals("foobared", jedis.configGet("requirepass").get(1));
         assertEquals(2, jedis.getDB().intValue());
