@@ -16,6 +16,7 @@ import redis.clients.jedis.BinaryClient.LIST_POSITION;
 import redis.clients.jedis.exceptions.JedisDataException;
 import redis.clients.jedis.exceptions.JedisException;
 import redis.clients.util.JedisByteHashMap;
+import redis.clients.util.Parser;
 import redis.clients.util.SafeEncoder;
 
 public class BinaryJedis implements BasicCommands, BinaryJedisCommands,
@@ -1580,7 +1581,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands,
 	checkIsInMulti();
 	client.zincrby(key, score, member);
 	String newscore = client.getBulkReply();
-	return Double.valueOf(newscore);
+	return Parser.parseRedisDouble(newscore);
     }
 
     /**
@@ -2445,8 +2446,7 @@ public class BinaryJedis implements BasicCommands, BinaryJedisCommands,
 	Set<Tuple> set = new LinkedHashSet<Tuple>();
 	Iterator<byte[]> iterator = membersWithScores.iterator();
 	while (iterator.hasNext()) {
-	    set.add(new Tuple(iterator.next(), Double.valueOf(SafeEncoder
-		    .encode(iterator.next()))));
+	    set.add(new Tuple(iterator.next(), BuilderFactory.DOUBLE.build(iterator.next())));
 	}
 	return set;
     }
