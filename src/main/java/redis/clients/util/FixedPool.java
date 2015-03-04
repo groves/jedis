@@ -20,6 +20,10 @@ public abstract class FixedPool<T> implements Pool<T> {
         }
     }
 
+    @Override
+    public int getNumActive() {
+        return internalPool.getNumActive();
+    }
 
     public void returnBrokenResource(final T resource) {
         try {

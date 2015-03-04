@@ -79,6 +79,10 @@ public class JedisSentinelPool implements Pool<Jedis> {
                 throw new JedisException("Could not return the resource to the pool", e);
             }
         }
+
+        public int getNumActive() {
+            return pool.getNumActive();
+        }
     }
 
     /** The currently active pool and its connections or null if we have no active pool. */
@@ -179,6 +183,15 @@ public class JedisSentinelPool implements Pool<Jedis> {
         } catch (Exception e) {
             throw new JedisConnectionException("Could not get a resource from the pool", e);
         }
+    }
+
+    @Override
+    public int getNumActive() {
+        ActivePool currentPool = pool;
+        if (currentPool == null) {
+            return 0;
+        }
+        return currentPool.getNumActive();
     }
 
     public void returnBrokenResource(Jedis resource) {
