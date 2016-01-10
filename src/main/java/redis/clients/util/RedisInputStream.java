@@ -16,63 +16,50 @@
 
 package redis.clients.util;
 
-import java.io.FilterInputStream;
+import java.io.BufferedInputStream;
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 
 import redis.clients.jedis.exceptions.JedisConnectionException;
 
-public class RedisInputStream extends FilterInputStream {
-
-    protected final byte buf[];
-
-    protected int count, limit;
+public class RedisInputStream extends BufferedInputStream {
 
     public RedisInputStream(InputStream in, int size) {
-	super(in);
-	if (size <= 0) {
-	    throw new IllegalArgumentException("Buffer size <= 0");
-	}
-	buf = new byte[size];
+	super(in, size);
     }
 
     public RedisInputStream(InputStream in) {
 	this(in, 8192);
     }
 
-    public byte readByte() throws IOException {
-	if (count == limit) {
-	    fill();
+	public synchronized byte readByte() throws IOException {
+		int b = read();
+		if (b == -1) {
+			throw new EOFException("Was expecting to get a byte, but got the end of stream");
+		}
+		return (byte)b;
 	}
 
-	return buf[count++];
-    }
-
-    public String readLine() {
+    public synchronized String readLine() {
 	int b;
-	byte c;
+	int c;
 	StringBuilder sb = new StringBuilder();
 
 	try {
 	    while (true) {
-		if (count == limit) {
-		    fill();
-		}
-		if (limit == -1)
-		    break;
 
-		b = buf[count++];
+		b = read();
+			if (b == -1) {
+				break;
+			}
 		if (b == '\r') {
-		    if (count == limit) {
-			fill();
-		    }
 
-		    if (limit == -1) {
-			sb.append((char) b);
-			break;
-		    }
-
-		    c = buf[count++];
+		    c = read();
+			if (c == -1) {
+				sb.append((char) b);
+				break;
+			}
 		    if (c == '\n') {
 			break;
 		    }
@@ -91,22 +78,5 @@ public class RedisInputStream extends FilterInputStream {
 		    "It seems like server has closed the connection.");
 	}
 	return reply;
-    }
-
-    public int read(byte[] b, int off, int len) throws IOException {
-	if (count == limit) {
-	    fill();
-	    if (limit == -1)
-		return -1;
-	}
-	final int length = Math.min(limit - count, len);
-	System.arraycopy(buf, count, b, off, length);
-	count += length;
-	return length;
-    }
-
-    private void fill() throws IOException {
-	limit = in.read(buf);
-	count = 0;
     }
 }

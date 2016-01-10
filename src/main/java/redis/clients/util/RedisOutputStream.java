@@ -1,72 +1,27 @@
 package redis.clients.util;
 
-import java.io.FilterOutputStream;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 
 /**
- * The class implements a buffered output stream without synchronization There
- * are also special operations like in-place string encoding. This stream fully
- * ignore mark/reset and should not be used outside Jedis
+ * Adds special operations like in-place string encoding to BufferedOutputStream.
  */
-public final class RedisOutputStream extends FilterOutputStream {
-    protected final byte buf[];
-
-    protected int count;
+public final class RedisOutputStream extends BufferedOutputStream {
 
     public RedisOutputStream(final OutputStream out) {
 	this(out, 8192);
     }
 
     public RedisOutputStream(final OutputStream out, final int size) {
-	super(out);
-	if (size <= 0) {
-	    throw new IllegalArgumentException("Buffer size <= 0");
-	}
-	buf = new byte[size];
+	super(out, size);
     }
 
-    private void flushBuffer() throws IOException {
-	if (count > 0) {
-	    out.write(buf, 0, count);
-	    count = 0;
-	}
-    }
-
-    public void write(final byte b) throws IOException {
-	buf[count++] = b;
-	if (count == buf.length) {
-	    flushBuffer();
-	}
-    }
-
-    public void write(final byte[] b) throws IOException {
-	write(b, 0, b.length);
-    }
-
-    public void write(final byte b[], final int off, final int len)
-	    throws IOException {
-	if (len >= buf.length) {
-	    flushBuffer();
-	    out.write(b, off, len);
-	} else {
-	    if (len >= buf.length - count) {
-		flushBuffer();
-	    }
-
-	    System.arraycopy(b, off, buf, count, len);
-	    count += len;
-	}
-    }
-
-    public void writeAsciiCrLf(final String in) throws IOException {
+    public synchronized void writeAsciiCrLf(final String in) throws IOException {
 	final int size = in.length();
 
 	for (int i = 0; i != size; ++i) {
-	    buf[count++] = (byte) in.charAt(i);
-	    if (count == buf.length) {
-		flushBuffer();
-	    }
+		write((byte) in.charAt(i));
 	}
 
 	writeCrLf();
@@ -94,16 +49,12 @@ public final class RedisOutputStream extends FilterOutputStream {
 	return utfLen;
     }
 
-    public void writeCrLf() throws IOException {
-	if (2 >= buf.length - count) {
-	    flushBuffer();
-	}
-
-	buf[count++] = '\r';
-	buf[count++] = '\n';
+    public synchronized void writeCrLf() throws IOException {
+		write('\r');
+		write('\n');
     }
 
-    public void writeUtf8CrLf(final String str) throws IOException {
+    public synchronized void writeUtf8CrLf(final String str) throws IOException {
 	int strLen = str.length();
 
 	int i;
@@ -111,41 +62,26 @@ public final class RedisOutputStream extends FilterOutputStream {
 	    char c = str.charAt(i);
 	    if (!(c < 0x80))
 		break;
-	    buf[count++] = (byte) c;
-	    if (count == buf.length) {
-		flushBuffer();
-	    }
+		write(c);
 	}
 
 	for (; i < strLen; i++) {
 	    char c = str.charAt(i);
 	    if (c < 0x80) {
-		buf[count++] = (byte) c;
-		if (count == buf.length) {
-		    flushBuffer();
-		}
+			write(c);
 	    } else if (c < 0x800) {
-		if (2 >= buf.length - count) {
-		    flushBuffer();
-		}
-		buf[count++] = (byte) (0xc0 | (c >> 6));
-		buf[count++] = (byte) (0x80 | (c & 0x3f));
+			write((byte) (0xc0 | (c >> 6)));
+		write((byte) (0x80 | (c & 0x3f)));
 	    } else if (isSurrogate(c)) {
-		if (4 >= buf.length - count) {
-		    flushBuffer();
-		}
 		int uc = Character.toCodePoint(c, str.charAt(i++));
-		buf[count++] = ((byte) (0xf0 | ((uc >> 18))));
-		buf[count++] = ((byte) (0x80 | ((uc >> 12) & 0x3f)));
-		buf[count++] = ((byte) (0x80 | ((uc >> 6) & 0x3f)));
-		buf[count++] = ((byte) (0x80 | (uc & 0x3f)));
+		write((byte) (0xf0 | ((uc >> 18))));
+		write((byte) (0x80 | ((uc >> 12) & 0x3f)));
+		write((byte) (0x80 | ((uc >> 6) & 0x3f)));
+		write((byte) (0x80 | (uc & 0x3f)));
 	    } else {
-		if (3 >= buf.length - count) {
-		    flushBuffer();
-		}
-		buf[count++] = ((byte) (0xe0 | ((c >> 12))));
-		buf[count++] = ((byte) (0x80 | ((c >> 6) & 0x3f)));
-		buf[count++] = ((byte) (0x80 | (c & 0x3f)));
+		write((byte) (0xe0 | ((c >> 12))));
+		write((byte) (0x80 | ((c >> 6) & 0x3f)));
+		write((byte) (0x80 | (c & 0x3f)));
 	    }
 	}
 
@@ -180,7 +116,7 @@ public final class RedisOutputStream extends FilterOutputStream {
 	    'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w',
 	    'x', 'y', 'z' };
 
-    public void writeIntCrLf(int value) throws IOException {
+    public synchronized void writeIntCrLf(int value) throws IOException {
 	if (value < 0) {
 	    write((byte) '-');
 	    value = -value;
@@ -192,7 +128,7 @@ public final class RedisOutputStream extends FilterOutputStream {
 
 	size++;
 	if (size >= buf.length - count) {
-	    flushBuffer();
+	    flush();
 	}
 
 	int q, r;
@@ -217,10 +153,5 @@ public final class RedisOutputStream extends FilterOutputStream {
 	count += size;
 
 	writeCrLf();
-    }
-
-    public void flush() throws IOException {
-	flushBuffer();
-	out.flush();
     }
 }
